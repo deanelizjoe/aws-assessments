@@ -111,11 +111,13 @@ jobs:
         with:
           tflint_version: ${{ env.TFLINT_VERSION }}
 
-      - name: tflint — modules
-        run: |
-          cd terraform/modules/auth    && tflint --init && tflint
-          cd terraform/modules/compute     && tflint --init && tflint
-        working-directory: terraform
+      - name: tflint — auth module
+        run: tflint --init && tflint
+        working-directory: terraform/modules/auth
+
+      - name: tflint - compute module
+        run: tflint --init && tflint
+        working-directory: terraform/modules/compute
 
       # ── Python linting (test script) ──────────────────────────────────────
       - name: Setup Python
