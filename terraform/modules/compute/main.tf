@@ -204,13 +204,13 @@ resource "aws_dynamodb_table" "greeting_logs" {
 
 data "archive_file" "greeter" {
   type        = "zip"
-  source_dir  = "${path.root}/../../lambdas/greeter"
+  source_dir  = "${path.root}/../../../lambdas/greeter"
   output_path = "${path.module}/builds/greeter.zip"
 }
 
 data "archive_file" "dispatcher" {
   type        = "zip"
-  source_dir  = "${path.root}/../../lambdas/dispatcher"
+  source_dir  = "${path.root}/../../../lambdas/dispatcher"
   output_path = "${path.module}/builds/dispatcher.zip"
 }
 
@@ -362,6 +362,17 @@ resource "aws_apigatewayv2_stage" "default" {
 
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_gw.arn
+    format = jsonencode({
+      requestId      = "$context.requestId"
+      ip             = "$context.identity.sourceIp"
+      requestTime    = "$context.requestTime"
+      httpMethod     = "$context.httpMethod"
+      routeKey       = "$context.routeKey"
+      status         = "$context.status"
+      protocol       = "$context.protocol"
+      responseLength = "$context.responseLength"
+      errorMessage   = "$context.error.message"
+    })
   }
 
   tags = var.tags
@@ -417,7 +428,7 @@ resource "aws_route_table_association" "public" {
 # Security group — ECS tasks: allow outbound HTTPS only (SNS/ECS API calls)
 resource "aws_security_group" "ecs_task" {
   name        = "${local.name_prefix}-ecs-task-sg"
-  description = "ECS Fargate task — outbound HTTPS only"
+  description = "ECS Fargate task - outbound HTTPS only"
   vpc_id      = aws_vpc.main.id
 
   egress {
