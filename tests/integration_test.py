@@ -49,6 +49,7 @@ RESET = "\033[0m"
 # Configuration
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _require_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -59,8 +60,12 @@ def _require_env(name: str) -> str:
 
 @dataclass
 class Config:
-    cognito_user_pool_id: str = field(default_factory=lambda: _require_env("COGNITO_USER_POOL_ID"))
-    cognito_client_id: str = field(default_factory=lambda: _require_env("COGNITO_CLIENT_ID"))
+    cognito_user_pool_id: str = field(
+        default_factory=lambda: _require_env("COGNITO_USER_POOL_ID")
+    )
+    cognito_client_id: str = field(
+        default_factory=lambda: _require_env("COGNITO_CLIENT_ID")
+    )
     username: str = field(default_factory=lambda: _require_env("COGNITO_USERNAME"))
     password: str = field(default_factory=lambda: _require_env("COGNITO_PASSWORD"))
     api_url_use1: str = field(default_factory=lambda: _require_env("API_URL_USE1"))
@@ -74,6 +79,7 @@ class Config:
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 1 — Cognito Authentication
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def authenticate(cfg: Config) -> str:
     """
@@ -119,10 +125,11 @@ def authenticate(cfg: Config) -> str:
 # HTTP helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class ApiResult:
-    region_label: str      # e.g. "us-east-1"
-    endpoint: str          # e.g. "/greet"
+    region_label: str  # e.g. "us-east-1"
+    endpoint: str  # e.g. "/greet"
     status_code: int
     body: dict
     latency_ms: float
@@ -180,6 +187,7 @@ def call_endpoint(
 # Step 2 — Concurrent /greet calls
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def test_greet(cfg: Config, token: str) -> list[ApiResult]:
     print(f"\n{BOLD}{CYAN}═══ Step 2: Concurrent /greet calls ═══{RESET}")
 
@@ -195,7 +203,9 @@ def test_greet(cfg: Config, token: str) -> list[ApiResult]:
     failures = []
     for r in results:
         if not r.ok:
-            failures.append(f"  {r.region_label} returned HTTP {r.status_code}: {r.error or r.body}")
+            failures.append(
+                f"  {r.region_label} returned HTTP {r.status_code}: {r.error or r.body}"
+            )
             continue
 
         returned_region = r.body.get("region", "")
@@ -205,8 +215,10 @@ def test_greet(cfg: Config, token: str) -> list[ApiResult]:
                 f"expected '{r.region_label}', got '{returned_region}'"
             )
         else:
-            print(f"  {GREEN}✓ [{r.region_label}] region assertion PASSED "
-                  f"(payload.region == '{returned_region}'){RESET}")
+            print(
+                f"  {GREEN}✓ [{r.region_label}] region assertion PASSED "
+                f"(payload.region == '{returned_region}'){RESET}"
+            )
 
     if failures:
         for f in failures:
@@ -219,6 +231,7 @@ def test_greet(cfg: Config, token: str) -> list[ApiResult]:
 # ══════════════════════════════════════════════════════════════════════════════
 # Step 3 — Concurrent /dispatch calls
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def test_dispatch(cfg: Config, token: str) -> list[ApiResult]:
     print(f"\n{BOLD}{CYAN}═══ Step 3: Concurrent /dispatch calls ═══{RESET}")
@@ -234,7 +247,9 @@ def test_dispatch(cfg: Config, token: str) -> list[ApiResult]:
     failures = []
     for r in results:
         if not r.ok:
-            failures.append(f"  {r.region_label} /dispatch returned HTTP {r.status_code}: {r.error or r.body}")
+            failures.append(
+                f"  {r.region_label} /dispatch returned HTTP {r.status_code}: {r.error or r.body}"
+            )
             continue
 
         returned_region = r.body.get("region", "")
@@ -245,7 +260,9 @@ def test_dispatch(cfg: Config, token: str) -> list[ApiResult]:
             )
         else:
             task_arn = r.body.get("taskArn", "N/A")
-            print(f"  {GREEN}✓ [{r.region_label}] ECS task dispatched — ARN: {task_arn}{RESET}")
+            print(
+                f"  {GREEN}✓ [{r.region_label}] ECS task dispatched — ARN: {task_arn}{RESET}"
+            )
 
     if failures:
         for f in failures:
@@ -259,7 +276,10 @@ def test_dispatch(cfg: Config, token: str) -> list[ApiResult]:
 # Step 4 — Latency summary
 # ══════════════════════════════════════════════════════════════════════════════
 
-def print_latency_summary(greet_results: list[ApiResult], dispatch_results: list[ApiResult]) -> None:
+
+def print_latency_summary(
+    greet_results: list[ApiResult], dispatch_results: list[ApiResult]
+) -> None:
     print(f"\n{BOLD}{CYAN}═══ Step 4: Latency Summary ═══{RESET}")
     print(f"\n  {'Endpoint':<12}  {'Region':<12}  {'Latency (ms)':>14}  Status")
     print(f"  {'─' * 12}  {'─' * 12}  {'─' * 14}  {'─' * 10}")
@@ -287,14 +307,12 @@ def print_latency_summary(greet_results: list[ApiResult], dispatch_results: list
 # Helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _run_concurrent(tasks) -> list[ApiResult]:
     """Execute API calls concurrently using a thread pool."""
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as executor:
-        futures = {
-            executor.submit(call_endpoint, *task): task[0]
-            for task in tasks
-        }
+        futures = {executor.submit(call_endpoint, *task): task[0] for task in tasks}
         for future in concurrent.futures.as_completed(futures):
             results.append(future.result())
     return results
@@ -303,7 +321,9 @@ def _run_concurrent(tasks) -> list[ApiResult]:
 def _print_results(results: list[ApiResult]) -> None:
     for r in sorted(results, key=lambda x: x.region_label):
         icon = GREEN + "✓" + RESET if r.ok else RED + "✗" + RESET
-        print(f"\n  {icon} [{r.region_label}] HTTP {r.status_code} — {r.latency_ms:.1f} ms")
+        print(
+            f"\n  {icon} [{r.region_label}] HTTP {r.status_code} — {r.latency_ms:.1f} ms"
+        )
         print(f"    Body: {json.dumps(r.body, indent=2)[:300]}")
 
 

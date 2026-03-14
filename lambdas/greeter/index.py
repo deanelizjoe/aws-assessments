@@ -40,8 +40,9 @@ def handler(event: dict, context) -> dict:
     request_id = str(uuid.uuid4())
     timestamp = datetime.now(timezone.utc).isoformat()
 
-    logger.info("Greeter invoked | region=%s | request_id=%s",
-                AWS_REGION_NAME, request_id)
+    logger.info(
+        "Greeter invoked | region=%s | request_id=%s", AWS_REGION_NAME, request_id
+    )
 
     # ── 1. Write to DynamoDB ─────────────────────────────────────────────────
     try:

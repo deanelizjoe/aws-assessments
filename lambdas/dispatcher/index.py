@@ -64,11 +64,15 @@ def handler(event: dict, context) -> dict:
     failures = response.get("failures", [])
     if failures:
         logger.error("ECS RunTask returned failures: %s", failures)
-        return _error(500, f"ECS task launch failed: {failures[0].get('reason', 'unknown')}")
+        return _error(
+            500, f"ECS task launch failed: {failures[0].get('reason', 'unknown')}"
+        )
 
     tasks = response.get("tasks", [])
     task_arn = tasks[0]["taskArn"] if tasks else "unknown"
-    logger.info("ECS task launched | task_arn=%s | region=%s", task_arn, AWS_REGION_NAME)
+    logger.info(
+        "ECS task launched | task_arn=%s | region=%s", task_arn, AWS_REGION_NAME
+    )
 
     return {
         "statusCode": 200,
