@@ -10,8 +10,7 @@
 
 set -euo pipefail
 
-# UNLEASH_SNS_ARN="${UNLEASH_SNS_ARN:-arn:aws:sns:us-east-1:637226132752:Candidate-Verification-Topic}"
-UNLEASH_SNS_ARN="${UNLEASH_SNS_ARN:-arn:aws:sns:ap-southeast-2:661722818235:Candi-Veri}"
+UNLEASH_SNS_ARN="${UNLEASH_SNS_ARN:-arn:aws:sns:us-east-1:637226132752:Candidate-Verification-Topic}"
 AUTHOR_EMAIL="${AUTHOR_EMAIL:-your_email@example.com}"
 REPO_URL="${REPO_URL:-https://github.com/candidate/aws-assessment}"
 # EXECUTING_REGION is injected by the Dispatcher Lambda via container override
@@ -25,7 +24,7 @@ echo "Region  : $EXECUTING_REGION"
 echo "Payload : $PAYLOAD"
 
 aws sns publish \
-  --region ap-southeast-2 \
+  --region us-east-1 \
   --topic-arn "$UNLEASH_SNS_ARN" \
   --message "$PAYLOAD"
 

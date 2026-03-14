@@ -31,8 +31,7 @@ dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION_NAME)
 table = dynamodb.Table(DYNAMODB_TABLE)
 
 # SNS client — the Unleash topic lives in us-east-1 regardless of our region
-# sns = boto3.client("sns", region_name="us-east-1")
-sns = boto3.client("sns", region_name="ap-southeast-2")
+sns = boto3.client("sns", region_name="us-east-1")
 
 
 def handler(event: dict, context) -> dict:

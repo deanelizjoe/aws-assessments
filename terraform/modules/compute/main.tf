@@ -17,8 +17,8 @@ terraform {
 
 locals {
   # SNS topic owned by Unleash — cross-account publish only
-  # unleash_sns_arn = "arn:aws:sns:us-east-1:637226132752:Candidate-Verification-Topic"
-  unleash_sns_arn = "arn:aws:sns:ap-southeast-2:661722818235:Candi-Veri"
+  unleash_sns_arn = "arn:aws:sns:us-east-1:637226132752:Candidate-Verification-Topic"
+  
 
   name_prefix = "${var.project_name}-${var.aws_region}"
 }
@@ -482,7 +482,7 @@ resource "aws_ecs_task_definition" "publisher" {
       # task definition pattern works identically across regions.
       command = [
         "sns", "publish",
-        "--region", "ap-southeast-2",
+        "--region", "us-east-1",
         "--topic-arn", local.unleash_sns_arn,
         "--message", jsonencode({
           email  = var.author_email
