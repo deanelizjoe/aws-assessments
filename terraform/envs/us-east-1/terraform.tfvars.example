@@ -1,0 +1,7 @@
+# terraform/envs/us-east-1/terraform.tfvars.example
+# Copy to terraform.tfvars (git-ignored) and fill in real values.
+
+project_name            = "unleash-assessment"
+test_user_email         = "your@email.com"
+test_user_temp_password = "Replace-Me-123!"   # Must satisfy Cognito password policy
+repo_url                = "https://github.com/yourusername/aws-assessment"

@@ -1,0 +1,35 @@
+# Terraform
+**/.terraform/
+**/*.tfplan
+**/*.tfstate
+**/*.tfstate.backup
+**/tfplan-*.bin
+**/.terraform.lock.hcl
+**/terraform.tfvars
+**/terraform.tfvars.json
+**/*.auto.tfvars
+# Allow example tfvars
+!**/terraform.tfvars.example
+
+# Lambda build artefacts
+terraform/modules/compute/builds/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+venv/
+.venv/
+
+# Test outputs
+test-results.xml
+*.sarif
+
+# IDE
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,465 @@
+# .github/workflows/deploy.yml
+#
+# CI/CD pipeline for the multi-region AWS compute stack.
+#
+# Stages:
+#   1. lint-validate   — terraform fmt, validate, tflint
+#   2. security-scan   — tfsec + checkov static analysis
+#   3. plan            — terraform plan for both regions (no apply in PR)
+#   4. deploy          — terraform apply (main branch only, manual approval gate)
+#   5. integration-test — placeholder showing where tests run post-deploy
+#
+# Required GitHub Secrets:
+#   AWS_ROLE_ARN             — IAM Role ARN to assume via OIDC (no long-lived keys)
+#   TF_VAR_test_user_email   — Cognito test user email
+#   TF_VAR_test_user_temp_password — Cognito test user temp password
+#   TF_VAR_repo_url          — GitHub repo URL
+
+name: Deploy Multi-Region Stack
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "assessment"
+        type: choice
+        options: [assessment, production]
+
+permissions:
+  id-token: write   # Required for OIDC → AWS
+  contents: read
+  pull-requests: write  # Allow posting plan output as PR comment
+
+# Cancel in-progress runs on the same branch to avoid concurrent Terraform
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_VERSION: "1.8.5"
+  TFLINT_VERSION: "v0.52.0"
+  PYTHON_VERSION: "3.12"
+  AWS_REGION_PRIMARY: "us-east-1"
+  AWS_REGION_SECONDARY: "eu-west-1"
+
+# ══════════════════════════════════════════════════════════════════════════════
+jobs:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1 — Lint & Validate
+# ─────────────────────────────────────────────────────────────────────────────
+  lint-validate:
+    name: "🔍 Lint & Validate"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Terraform setup ───────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # terraform fmt — fails if any file is not formatted
+      - name: Terraform Format Check (modules)
+        run: terraform fmt -check -recursive terraform/
+        id: fmt
+
+      - name: Post fmt result to PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcome = '${{ steps.fmt.outcome }}';
+            const icon = outcome === 'success' ? '✅' : '❌';
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `${icon} **terraform fmt** ${outcome}`
+            });
+
+      # terraform validate — us-east-1
+      - name: Terraform Init (us-east-1) — backend=false for validation
+        working-directory: terraform/envs/us-east-1
+        run: terraform init -backend=false
+
+      - name: Terraform Validate (us-east-1)
+        working-directory: terraform/envs/us-east-1
+        run: terraform validate
+
+      # terraform validate — eu-west-1
+      - name: Terraform Init (eu-west-1) — backend=false for validation
+        working-directory: terraform/envs/eu-west-1
+        run: terraform init -backend=false
+
+      - name: Terraform Validate (eu-west-1)
+        working-directory: terraform/envs/eu-west-1
+        run: terraform validate
+
+      # ── tflint ───────────────────────────────────────────────────────────
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - name: tflint — modules
+        run: |
+          cd terraform/modules/auth    && tflint --init && tflint
+          cd ../../modules/compute     && tflint --init && tflint
+        working-directory: terraform
+
+      # ── Python linting (test script) ──────────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python linters
+        run: pip install ruff
+
+      - name: Ruff lint — tests/
+        run: ruff check tests/ lambdas/
+
+      - name: Ruff format check
+        run: ruff format --check tests/ lambdas/
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 2 — Security Scan
+# ─────────────────────────────────────────────────────────────────────────────
+  security-scan:
+    name: "🔒 Security Scan"
+    runs-on: ubuntu-latest
+    needs: lint-validate
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── tfsec ─────────────────────────────────────────────────────────────
+      - name: tfsec — IaC static analysis
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform/
+          # Soft-fail on MEDIUM findings; hard-fail on HIGH/CRITICAL
+          soft_fail_on: MEDIUM,LOW
+          format: sarif
+          additional_args: >-
+            --exclude-downloaded-modules
+            --concise-output
+
+      - name: Upload tfsec SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: tfsec
+
+      # ── checkov ───────────────────────────────────────────────────────────
+      - name: checkov — Policy-as-Code scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,checkov-results.sarif
+          # Skip checks that are intentionally accepted trade-offs for this
+          # cost-optimised assessment stack (documented in SECURITY.md)
+          skip_check: >-
+            CKV_AWS_115,
+            CKV_AWS_116,
+            CKV_AWS_117,
+            CKV2_AWS_29
+          soft_fail: false
+
+      - name: Upload checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+
+      # ── Lambda dependency audit ───────────────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: pip-audit — Lambda dependencies
+        run: |
+          pip install pip-audit
+          pip-audit -r tests/requirements.txt
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 3 — Plan (both regions)
+# ─────────────────────────────────────────────────────────────────────────────
+  plan:
+    name: "📋 Terraform Plan"
+    runs-on: ubuntu-latest
+    needs: [lint-validate, security-scan]
+    # Note: AWS credentials are NOT provided to the runner for PRs.
+    # This job shows the plan architecture and syntax but requires OIDC
+    # credentials to actually contact the AWS API. In a real pipeline,
+    # uncomment the OIDC steps below.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+
+    strategy:
+      matrix:
+        region: [us-east-1, eu-west-1]
+      fail-fast: false   # Plan both regions even if one fails
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false  # Needed for clean plan output
+
+      # ── OIDC Auth (uncomment when real credentials are configured) ─────────
+      # - name: Configure AWS credentials (OIDC)
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+      #     aws-region: ${{ matrix.region }}
+      #     role-session-name: github-actions-plan-${{ matrix.region }}
+
+      - name: Terraform Init — ${{ matrix.region }}
+        working-directory: terraform/envs/${{ matrix.region }}
+        env:
+          # Backend config via env vars keeps secrets out of code
+          TF_CLI_ARGS_init: >-
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+            -backend-config="key=aws-assessment/${{ matrix.region }}/terraform.tfstate"
+            -backend-config="region=us-east-1"
+            -backend-config="dynamodb_table=terraform-locks"
+        run: terraform init -backend=false  # -backend=false until credentials present
+
+      - name: Terraform Plan — ${{ matrix.region }}
+        working-directory: terraform/envs/${{ matrix.region }}
+        id: plan
+        env:
+          TF_VAR_test_user_email: ${{ secrets.TF_VAR_test_user_email }}
+          TF_VAR_test_user_temp_password: ${{ secrets.TF_VAR_test_user_temp_password }}
+          TF_VAR_repo_url: ${{ secrets.TF_VAR_repo_url }}
+          # eu-west-1 needs Cognito IDs from us-east-1 state
+          TF_VAR_cognito_user_pool_id: ${{ secrets.COGNITO_USER_POOL_ID }}
+          TF_VAR_cognito_client_id: ${{ secrets.COGNITO_CLIENT_ID }}
+          TF_VAR_author_email: ${{ secrets.TF_VAR_test_user_email }}
+        run: |
+          terraform plan \
+            -no-color \
+            -out=tfplan-${{ matrix.region }}.bin \
+            2>&1 | tee plan-${{ matrix.region }}.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+        continue-on-error: true   # Allow posting output even on plan error
+
+      - name: Post Plan to PR — ${{ matrix.region }}
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let plan = '';
+            try {
+              plan = fs.readFileSync('terraform/envs/${{ matrix.region }}/plan-${{ matrix.region }}.txt', 'utf8');
+            } catch { plan = '(plan output not available — credentials required)'; }
+
+            // Truncate if too long for a PR comment
+            const MAX = 60000;
+            if (plan.length > MAX) {
+              plan = plan.substring(0, MAX) + '\n... (truncated)';
+            }
+
+            const outcome = '${{ steps.plan.outcome }}';
+            const icon = outcome === 'success' ? '✅' : '⚠️';
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### ${icon} Terraform Plan — \`${{ matrix.region }}\`\n\n<details><summary>Show Plan</summary>\n\n\`\`\`hcl\n${plan}\n\`\`\`\n\n</details>`
+            });
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        if: steps.plan.outcome == 'success'
+        with:
+          name: tfplan-${{ matrix.region }}
+          path: terraform/envs/${{ matrix.region }}/tfplan-${{ matrix.region }}.bin
+          retention-days: 5
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 4 — Deploy (main branch only, requires manual approval)
+# ─────────────────────────────────────────────────────────────────────────────
+  deploy-use1:
+    name: "🚀 Deploy us-east-1"
+    runs-on: ubuntu-latest
+    needs: plan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: assessment-us-east-1   # Configure required reviewers in GitHub Environments
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: github-actions-deploy-use1
+
+      - name: Terraform Init
+        working-directory: terraform/envs/us-east-1
+        run: terraform init
+
+      - name: Terraform Apply — us-east-1
+        working-directory: terraform/envs/us-east-1
+        env:
+          TF_VAR_test_user_email: ${{ secrets.TF_VAR_test_user_email }}
+          TF_VAR_test_user_temp_password: ${{ secrets.TF_VAR_test_user_temp_password }}
+          TF_VAR_repo_url: ${{ secrets.TF_VAR_repo_url }}
+        run: terraform apply -auto-approve
+
+      - name: Capture Outputs
+        working-directory: terraform/envs/us-east-1
+        id: outputs
+        run: |
+          echo "pool_id=$(terraform output -raw cognito_user_pool_id)" >> $GITHUB_OUTPUT
+          echo "client_id=$(terraform output -raw cognito_client_id)" >> $GITHUB_OUTPUT
+          echo "api_url=$(terraform output -raw api_gateway_url_use1)" >> $GITHUB_OUTPUT
+
+      # Store Cognito IDs as action outputs for eu-west-1 job
+    outputs:
+      cognito_pool_id: ${{ steps.outputs.outputs.pool_id }}
+      cognito_client_id: ${{ steps.outputs.outputs.client_id }}
+      api_url_use1: ${{ steps.outputs.outputs.api_url }}
+
+
+  deploy-euw1:
+    name: "🚀 Deploy eu-west-1"
+    runs-on: ubuntu-latest
+    needs: deploy-use1
+    environment:
+      name: assessment-eu-west-1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: eu-west-1
+          role-session-name: github-actions-deploy-euw1
+
+      - name: Terraform Init
+        working-directory: terraform/envs/eu-west-1
+        run: terraform init
+
+      - name: Terraform Apply — eu-west-1
+        working-directory: terraform/envs/eu-west-1
+        env:
+          TF_VAR_cognito_user_pool_id: ${{ needs.deploy-use1.outputs.cognito_pool_id }}
+          TF_VAR_cognito_client_id: ${{ needs.deploy-use1.outputs.cognito_client_id }}
+          TF_VAR_author_email: ${{ secrets.TF_VAR_test_user_email }}
+          TF_VAR_repo_url: ${{ secrets.TF_VAR_repo_url }}
+        run: terraform apply -auto-approve
+
+      - name: Capture Outputs
+        working-directory: terraform/envs/eu-west-1
+        id: outputs
+        run: |
+          echo "api_url=$(terraform output -raw api_gateway_url_euw1)" >> $GITHUB_OUTPUT
+
+    outputs:
+      api_url_euw1: ${{ steps.outputs.outputs.api_url }}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 5 — Integration Test (post-deploy placeholder)
+# ─────────────────────────────────────────────────────────────────────────────
+  integration-test:
+    name: "🧪 Integration Tests"
+    runs-on: ubuntu-latest
+    needs: [deploy-use1, deploy-euw1]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements.txt
+
+      - name: Configure AWS credentials (OIDC) — for Cognito auth
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: github-actions-test
+
+      # ── Execute the integration test suite ─────────────────────────────────
+      # NOTE: AWS credentials are NOT provided to the CI runner in this
+      # assessment submission (per the brief). The step below shows the
+      # exact command that would execute post-deployment.
+      - name: Run integration tests
+        env:
+          COGNITO_USER_POOL_ID: ${{ needs.deploy-use1.outputs.cognito_pool_id }}
+          COGNITO_CLIENT_ID: ${{ needs.deploy-use1.outputs.cognito_client_id }}
+          COGNITO_USERNAME: ${{ secrets.TF_VAR_test_user_email }}
+          COGNITO_PASSWORD: ${{ secrets.TF_VAR_test_user_temp_password }}
+          API_URL_USE1: ${{ needs.deploy-use1.outputs.api_url_use1 }}
+          API_URL_EUW1: ${{ needs.deploy-euw1.outputs.api_url_euw1 }}
+        run: |
+          pytest tests/integration_test.py \
+            -v \
+            --tb=short \
+            --junit-xml=test-results.xml \
+            --timeout=120
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: test-results.xml
+          retention-days: 30
+
+      - name: Publish test summary
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: test-results.xml
+          check_name: "Integration Test Results"

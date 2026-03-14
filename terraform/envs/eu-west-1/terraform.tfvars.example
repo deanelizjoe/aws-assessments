@@ -1,0 +1,12 @@
+# terraform/envs/eu-west-1/terraform.tfvars.example
+# Copy to terraform.tfvars and fill in values from us-east-1 Terraform outputs.
+
+project_name         = "unleash-assessment"
+author_email         = "your@email.com"
+repo_url             = "https://github.com/yourusername/aws-assessment"
+
+# From: cd terraform/envs/us-east-1 && terraform output cognito_user_pool_id
+cognito_user_pool_id = "us-east-1_XXXXXXXXX"
+
+# From: cd terraform/envs/us-east-1 && terraform output cognito_client_id
+cognito_client_id    = "xxxxxxxxxxxxxxxxxxxxxxxxxx"

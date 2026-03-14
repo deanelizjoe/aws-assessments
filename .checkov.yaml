@@ -1,0 +1,35 @@
+# .checkov.yaml — checkov configuration
+# Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html
+
+directory:
+  - terraform/
+
+framework:
+  - terraform
+
+output:
+  - cli
+  - sarif
+
+# Accepted risk exceptions (documented rationale below):
+skip-check:
+  # CKV_AWS_115: Lambda reserved concurrent executions
+  #   Rationale: Assessment stack, not production. Setting a reservation
+  #   would complicate cost management for an ephemeral environment.
+  - CKV_AWS_115
+
+  # CKV_AWS_116: Lambda DLQ
+  #   Rationale: SNS publish failure in the Greeter is non-fatal by design
+  #   (logged and handled gracefully). A DLQ would add cost for an assessment.
+  - CKV_AWS_116
+
+  # CKV_AWS_117: Lambda inside VPC
+  #   Rationale: Lambdas access SNS (AWS service endpoint). Placing them in
+  #   a VPC without a NAT Gateway would prevent outbound internet access;
+  #   a NAT Gateway would add significant cost for this assessment.
+  - CKV_AWS_117
+
+  # CKV2_AWS_29: API GW access logging
+  #   Rationale: CloudWatch log group is provisioned — this check sometimes
+  #   false-positives on HTTP API v2 with the $default stage.
+  - CKV2_AWS_29
