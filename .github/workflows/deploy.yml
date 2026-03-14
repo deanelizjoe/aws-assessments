@@ -114,7 +114,7 @@ jobs:
       - name: tflint — modules
         run: |
           cd terraform/modules/auth    && tflint --init && tflint
-          cd ../../modules/compute     && tflint --init && tflint
+          cd terraform/modules/compute     && tflint --init && tflint
         working-directory: terraform
 
       # ── Python linting (test script) ──────────────────────────────────────
