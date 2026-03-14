@@ -18,7 +18,7 @@ terraform {
 locals {
   # SNS topic owned by Unleash — cross-account publish only
   unleash_sns_arn = "arn:aws:sns:us-east-1:637226132752:Candidate-Verification-Topic"
-  
+
 
   name_prefix = "${var.project_name}-${var.aws_region}"
 }
